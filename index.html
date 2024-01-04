@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      .hidden {
+        display: none;
+      }
+      #orderContainer {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1%;
+        grid-row-gap: 10%;
+      }
+      .full-width {
+        grid-column: span 3; /* Make this item span across all columns */
+      }
+      .center-text{
+        font-family: "Inter-Black", Helvetica;
+        font-weight: 900;
+        font-size: 24px;
+        color:white;
+        width: 100%;
+        display: block;
+      }
+      .center-text>span{
+        display: block;
+        width: 100%;
+        text-align: center;
+      }
+      #clock{
+        background-color: grey;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <div class="div" id="orderContainer">
+
+      </div>
+      <div class="div-wrapper">
+        <div class="text-wrapper-8" id="clock">00:00:00</div>
+        <div class="center-text">
+            <span>Basic/INSTORE<span style="margin-left: 1rem;">BE</span><span style="margin-left: 1rem;">0/0</span></span>
+        </div>
+      </div>
+    </div>
+
+    <label for="orderInput">Order content:</label>
+    <input
+      type="text"
+      id="orderInput"
+      placeholder="2 cheeseburger, small milkshake"
+    />
+    <button onclick="processOrder()">Order total</button>
+
+    <audio id="notificationSound">
+      <source src="notify.wav" type="audio/wav" />
+      Your browser does not support the audio element.
+    </audio>
+
+    <script>
+      var orders = [];
+      var notificationSound = document.getElementById("notificationSound");
+      var orderIdCounter = 1; // Initialize order ID counter
+      var server_url = "http://localhost:3000";
+
+      function processOrder() {
+        var orderInput = document.getElementById("orderInput");
+        var orderText = orderInput.value;
+
+        if (orderText.trim() !== "") {
+          var order = {
+            text: orderText,
+            timestamp: Date.now() / 1000,
+            removing_time: null,
+            isReceived:1,
+          };
+
+          fetch(server_url + "/api/add-order", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(order),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              order.id = data.id;
+              orders.push(order);
+              displayOrders();
+              orderInput.value = "";
+              playNotificationSound();
+            })
+            .catch((error) => {
+              console.error("Error saving order:", error);
+            });
+        }
+      }
+
+      function displayOrders(problem = false) {
+        var orderContainer = document.getElementById("orderContainer");
+        var zero_orders = document.getElementById("0-orders");
+        
+        orderContainer.innerHTML = "";
+        
+        if (problem) {
+          orderContainer.innerHTML += `<h1 style="color: white;width:100%;text-align:center" id="0-orders" class="full-width">We Are Sorry, There Is An Error...<br>please check your internet connection or call the support</h1>`;
+          return;
+        }
+        
+        orders.forEach(function (order, index) {
+          if (order.isDeleted==1) {
+            orderContainer.innerHTML += `<div class="overlap">
+                <div class="rectangle">${order.text}</div>
+                <div class="rectangle-2" style="background-color:blue;"></div>
+                <div class="rectangle-3" style="background-color:blue;"></div>
+                <div class="text-wrapper">01-${formatNumber(order.id)}</div>
+                <div class="text-wrapper-2">INSTORE</div>
+                <div class="text-wrapper-3">Tárolva</div>
+                <div class="text-wrapper-4">${calculateElapsedTime(
+                  order.timestamp
+                )}</div>
+                <div class="text-wrapper-5">MFY1</div>
+            </div>`;
+          }else{
+            if (order.isReceived == 0) {
+              order.isReceived = 1;
+              fetch(server_url + "/api/received", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(order),
+              })
+                .then((response) => response.json())
+                .then((data) => {
+                  playNotificationSound();
+                })
+                .catch((error) => {
+                  console.error("Error receiving order:", error);
+                });
+            }
+            orderContainer.innerHTML += `<div class="overlap">
+                <div class="rectangle">${order.text}</div>
+                <div class="rectangle-2"></div>
+                <div class="rectangle-3"></div>
+                <div class="text-wrapper">01-${formatNumber(order.id)}</div>
+                <div class="text-wrapper-2">INSTORE</div>
+                <div class="text-wrapper-3">Tárolva</div>
+                <div class="text-wrapper-4">${calculateElapsedTime(
+                  order.timestamp
+                )}</div>
+                <div class="text-wrapper-5">MFY1</div>
+            </div>`;
+          }
+        });
+
+        if (orders.length == 0) {
+          orderContainer.innerHTML += `<h1 style="color: white;width:100%;text-align:center" id="0-orders" class="full-width">No Orders Found</h1>`;
+        }
+      }
+
+      document.addEventListener("keydown", function (event) {
+        // Check if the pressed key is the "Esc" key (key code 27)
+        if (orders.length > 0) {
+          if (event.key === "Escape") {
+            removeOldestOrder();
+          }
+        }
+        if (event.key === 'Backspace') {
+          undoLastOrder();
+        }
+      });
+
+      function formatNumber(num) {
+        // Convert the number to a string
+        let numStr = num.toString();
+
+        // Check the length of the number and format accordingly
+        if (numStr.length === 1) {
+          return "00" + numStr;
+        } else if (numStr.length === 2) {
+          return "0" + numStr;
+        } else {
+          // If the number has more than three digits, do nothing
+          return numStr;
+        }
+      }
+
+      function removeOldestOrder() {
+        // Get the container element
+        var container = document.getElementById("orderContainer");
+        OldestOrder = orders[0];
+        OldestOrder.removing_time = Date.now() / 1000;
+        fetch(server_url + "/api/remove", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(OldestOrder),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            orders.shift();
+            displayOrders();
+            // playNotificationSound();
+          })
+          .catch((error) => {
+            console.error("Error removing order:", error);
+          });
+      }
+
+      function undoLastOrder() {
+        fetch(server_url + "/api/undo", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (Object.keys(data).length) {
+              orders.unshift(data.updatedOrder);
+              displayOrders()
+            }else{
+              alert('No Orders Left');
+            }
+          })
+          .catch((error) => {
+            console.error("Error getting last order:", error);
+          });
+      }
+
+      function calculateElapsedTime(orderTimestamp) {
+        var now = Date.now() / 1000;
+        var elapsedTime = now - orderTimestamp;
+        return Math.round(elapsedTime);
+      }
+
+      function playNotificationSound() {
+        notificationSound.currentTime = 0; // Restores the sound's position
+        notificationSound.play();
+      }
+
+      document
+        .getElementById("orderInput")
+        .addEventListener("keyup", function (event) {
+          if (event.key === "Enter") {
+            processOrder();
+          }
+        });
+
+      window.addEventListener("beforeunload", function () {
+        orders = [];
+      });
+
+      function fetchOrders() {
+        fetch(server_url + "/api/orders")
+          .then((response) => response.json())
+          .then((data) => {
+            orders = data;
+            displayOrders();
+          })
+          .catch((error) => {
+            orders = [];
+            displayOrders((problem = true));
+            // console.error('Error fetching orders:', error);
+          });
+      }
+
+      // Fetch orders on page load
+      fetchOrders();
+
+      // Schedule periodic order updates
+      setInterval(fetchOrders, 5000); // Fetch orders every 5 seconds
+
+      setInterval(function () {
+        displayOrders();
+      }, 1000);
+      
+      function myTimer() {
+        const d = new Date();
+        document.getElementById("clock").innerHTML = d.toLocaleTimeString();
+      }
+      //clock
+      setInterval(myTimer, 1000);
+
+    </script>
+  </body>
+</html>
